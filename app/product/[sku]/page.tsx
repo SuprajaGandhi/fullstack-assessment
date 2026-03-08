@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,26 +17,63 @@ interface Product {
   imageUrls: string[];
   featureBullets: string[];
   retailerSku: string;
+  retailPrice: number;
 }
 
 export default function ProductPage() {
-  const searchParams = useSearchParams();
-  const productParam = searchParams.get('product');
+  const params = useParams();
+  const sku = params.sku as string;
   const [product, setProduct] = useState<Product | null>(null);
   const [selectedImage, setSelectedImage] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (productParam) {
-      try {
-        const parsedProduct = JSON.parse(productParam);
-        setProduct(parsedProduct);
-      } catch (error) {
-        console.error('Failed to parse product data:', error);
-      }
+    if (sku) {
+      setLoading(true);
+      setError(null);
+      
+      fetch(`/api/products/${sku}`)
+        .then((res) => {
+          if (!res.ok) {
+            if (res.status === 404) {
+              throw new Error('Product not found');
+            }
+            throw new Error('Failed to fetch product');
+          }
+          return res.json();
+        })
+        .then((data) => {
+          setProduct(data.product);
+          setLoading(false);
+        })
+        .catch((err) => {
+          console.error('Error loading product:', err);
+          setError(err.message || 'Failed to load product');
+          setLoading(false);
+        });
     }
-  }, [productParam]);
+  }, [sku]);
 
-  if (!product) {
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-8">
+          <Link href="/">
+            <Button variant="ghost" className="mb-4">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Products
+            </Button>
+          </Link>
+          <div className="text-center py-12">
+            <p className="text-muted-foreground">Loading product...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !product) {
     return (
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
@@ -47,7 +84,14 @@ export default function ProductPage() {
             </Button>
           </Link>
           <Card className="p-8">
-            <p className="text-center text-muted-foreground">Product not found</p>
+            <p className="text-center text-destructive mb-4">
+              {error || 'Product not found'}
+            </p>
+            <div className="flex justify-center">
+              <Link href="/">
+                <Button>Browse Products</Button>
+              </Link>
+            </div>
           </Card>
         </div>
       </div>
@@ -69,7 +113,7 @@ export default function ProductPage() {
             <Card className="overflow-hidden">
               <CardContent className="p-0">
                 <div className="relative h-96 w-full bg-muted">
-                  {product.imageUrls[selectedImage] && (
+                  {product.imageUrls?.[selectedImage] && (
                     <Image
                       src={product.imageUrls[selectedImage]}
                       alt={product.title}
@@ -83,7 +127,7 @@ export default function ProductPage() {
               </CardContent>
             </Card>
 
-            {product.imageUrls.length > 1 && (
+            {product.imageUrls && product.imageUrls.length > 1 && (
               <div className="grid grid-cols-4 gap-2">
                 {product.imageUrls.map((url, idx) => (
                   <button
@@ -92,6 +136,7 @@ export default function ProductPage() {
                     className={`relative h-20 border-2 rounded-lg overflow-hidden ${
                       selectedImage === idx ? 'border-primary' : 'border-muted'
                     }`}
+                    aria-label={`View image ${idx + 1} of ${product.imageUrls.length}`}
                   >
                     <Image
                       src={url}
@@ -113,10 +158,11 @@ export default function ProductPage() {
                 <Badge variant="outline">{product.subCategoryName}</Badge>
               </div>
               <h1 className="text-3xl font-bold mb-2">{product.title}</h1>
-              <p className="text-sm text-muted-foreground">SKU: {product.retailerSku}</p>
+              <p className="text-sm text-muted-foreground mb-4">SKU: {product.retailerSku}</p>
+              <p className="text-4xl font-bold text-primary">${product.retailPrice.toFixed(2)}</p>
             </div>
 
-            {product.featureBullets.length > 0 && (
+            {product.featureBullets && product.featureBullets.length > 0 && (
               <Card>
                 <CardContent className="pt-6">
                   <h2 className="text-lg font-semibold mb-3">Features</h2>

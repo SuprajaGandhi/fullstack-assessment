@@ -29,6 +29,7 @@ interface Product {
   categoryName: string;
   subCategoryName: string;
   imageUrls: string[];
+  retailPrice: number;
 }
 
 export default function Home() {
@@ -36,6 +37,7 @@ export default function Home() {
   const [categories, setCategories] = useState<string[]>([]);
   const [subCategories, setSubCategories] = useState<string[]>([]);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | undefined>(
     undefined
   );
@@ -43,6 +45,18 @@ export default function Home() {
     string | undefined
   >(undefined);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const limit = 20;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     fetch("/api/categories")
@@ -52,7 +66,7 @@ export default function Home() {
 
   useEffect(() => {
     if (selectedCategory) {
-      fetch(`/api/subcategories`)
+      fetch(`/api/subcategories?category=${encodeURIComponent(selectedCategory)}`)
         .then((res) => res.json())
         .then((data) => setSubCategories(data.subCategories));
     } else {
@@ -64,18 +78,28 @@ export default function Home() {
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams();
-    if (search) params.append("search", search);
+    if (debouncedSearch) params.append("search", debouncedSearch);
     if (selectedCategory) params.append("category", selectedCategory);
     if (selectedSubCategory) params.append("subCategory", selectedSubCategory);
-    params.append("limit", "20");
+    params.append("limit", limit.toString());
+    params.append("offset", offset.toString());
 
     fetch(`/api/products?${params}`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to fetch products');
+        return res.json();
+      })
       .then((data) => {
         setProducts(data.products);
+        setTotal(data.total);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Error loading products:', err);
+        setError('Failed to load products. Please try again.');
         setLoading(false);
       });
-  }, [search, selectedCategory, selectedSubCategory]);
+  }, [debouncedSearch, selectedCategory, selectedSubCategory, offset]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -85,12 +109,13 @@ export default function Home() {
 
           <div className="flex flex-col md:flex-row gap-4 mb-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" aria-hidden="true" />
               <Input
                 placeholder="Search products..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-10"
+                aria-label="Search products"
               />
             </div>
 
@@ -135,9 +160,12 @@ export default function Home() {
                 variant="outline"
                 onClick={() => {
                   setSearch("");
+                  setDebouncedSearch("");
                   setSelectedCategory(undefined);
                   setSelectedSubCategory(undefined);
+                  setOffset(0);
                 }}
+                aria-label="Clear all filters"
               >
                 Clear Filters
               </Button>
@@ -147,7 +175,12 @@ export default function Home() {
       </header>
 
       <main className="container mx-auto px-4 py-8">
-        {loading ? (
+        {error ? (
+          <div className="text-center py-12">
+            <p className="text-destructive mb-4">{error}</p>
+            <Button onClick={() => window.location.reload()}>Retry</Button>
+          </div>
+        ) : loading ? (
           <div className="text-center py-12">
             <p className="text-muted-foreground">Loading products...</p>
           </div>
@@ -157,28 +190,30 @@ export default function Home() {
           </div>
         ) : (
           <>
-            <p className="text-sm text-muted-foreground mb-4">
-              Showing {products.length} products
-            </p>
+            <div className="flex justify-between items-center mb-4">
+              <p className="text-sm text-muted-foreground">
+                Showing {offset + 1}-{Math.min(offset + limit, total)} of {total} products
+              </p>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {products.map((product) => (
+              {products.map((product, index) => (
                 <Link
                   key={product.stacklineSku}
-                  href={{
-                    pathname: "/product",
-                    query: { product: JSON.stringify(product) },
-                  }}
+                  href={`/product/${product.stacklineSku}`}
+                  aria-label={`View details for ${product.title}`}
                 >
                   <Card className="h-full hover:shadow-lg transition-shadow cursor-pointer">
                     <CardHeader className="p-0">
                       <div className="relative h-48 w-full overflow-hidden rounded-t-lg bg-muted">
-                        {product.imageUrls[0] && (
+                        {product.imageUrls?.[0] && (
                           <Image
                             src={product.imageUrls[0]}
                             alt={product.title}
                             fill
                             className="object-contain p-4"
                             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                            priority={index < 4}
+                            loading={index < 4 ? undefined : "lazy"}
                           />
                         )}
                       </div>
@@ -187,6 +222,9 @@ export default function Home() {
                       <CardTitle className="text-base line-clamp-2 mb-2">
                         {product.title}
                       </CardTitle>
+                      <p className="text-2xl font-bold mb-2">
+                        ${product.retailPrice.toFixed(2)}
+                      </p>
                       <CardDescription className="flex gap-2 flex-wrap">
                         <Badge variant="secondary">
                           {product.categoryName}
@@ -197,7 +235,7 @@ export default function Home() {
                       </CardDescription>
                     </CardContent>
                     <CardFooter>
-                      <Button variant="outline" className="w-full">
+                      <Button variant="outline" className="w-full" aria-label={`View details for ${product.title}`}>
                         View Details
                       </Button>
                     </CardFooter>
@@ -205,6 +243,32 @@ export default function Home() {
                 </Link>
               ))}
             </div>
+            
+            {total > limit && (
+              <div className="flex justify-center gap-2 mt-8">
+                <Button
+                  variant="outline"
+                  onClick={() => setOffset(Math.max(0, offset - limit))}
+                  disabled={offset === 0}
+                  aria-label="Previous page"
+                >
+                  Previous
+                </Button>
+                <div className="flex items-center px-4">
+                  <span className="text-sm text-muted-foreground">
+                    Page {Math.floor(offset / limit) + 1} of {Math.ceil(total / limit)}
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => setOffset(offset + limit)}
+                  disabled={offset + limit >= total}
+                  aria-label="Next page"
+                >
+                  Next
+                </Button>
+              </div>
+            )}
           </>
         )}
       </main>
